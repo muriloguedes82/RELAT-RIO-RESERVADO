@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.2
+// @version      0.3
 // @description  Abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
@@ -67,13 +67,20 @@
 
     // ── Etapas do cadastro (iframe userMainFrame) ───────────────────────────────────
 
-    // Cada etapa é identificada pelo segundo <h3> da página (o primeiro é "Cadastro de Processo").
+    // Cada etapa é identificada pelo indicador lateral <span class="currentStep">N - Título</span>.
     function etapaAtual() {
-        const titulos = [...document.querySelectorAll('h3')].map(h => norm(h.textContent));
-        if (titulos.includes('informações iniciais')) return 1;
-        if (titulos.includes('tramitação do processo')) return 2;
-        if (titulos.includes('informações processuais')) return 3;
-        return 0;
+        const span = document.querySelector('span.currentStep');
+        const n = span && parseInt(span.textContent, 10);
+        return Number.isFinite(n) ? n : 0;
+    }
+
+    // Na etapa 1, Localidade (codComarca) e Competência (codAreaDeVaras) são carregadas por
+    // AJAX em cascata a partir do Tribunal; avançar antes disso envia o formulário incompleto.
+    function combosEtapa1Prontos() {
+        return ['codComarca', 'codAreaDeVaras'].every(id => {
+            const sel = document.getElementById(id);
+            return sel && sel.options.length > 0 && sel.value && sel.value !== '0';
+        });
     }
 
     function proximoPasso() {
@@ -111,7 +118,13 @@
     async function executarEtapa() {
         const etapa = await esperar(etapaAtual, 5000);
         log('etapa', etapa);
-        if (etapa === 1 || etapa === 2) return proximoPasso();
+        if (etapa === 1) {
+            if (!await esperar(combosEtapa1Prontos, 10000)) {
+                return log('Localidade/Competência não foram preenchidas automaticamente; selecione e clique em Próximo Passo');
+            }
+            return proximoPasso();
+        }
+        if (etapa === 2) return proximoPasso();
         if (etapa === 3) {
             await preencherAutocomplete('descricaoClasseProcessual', CLASSE_PROCESSUAL);
             // Fim do fluxo definido até aqui; as próximas etapas ainda não foram mapeadas.
