@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.3
-// @description  Abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
+// @version      0.4
+// @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
 // ==/UserScript==
@@ -36,29 +36,33 @@
 
     // ── Menu (frame mainFrame) ──────────────────────────────────────────────────────
 
-    // O id do menu (sm-<número>-1) muda a cada carregamento: usa name + classe + texto.
-    function botaoProcessos() {
-        return [...document.querySelectorAll('a[name="projudiMenu"].has-submenu')]
-            .find(a => norm(a.firstChild && a.firstChild.textContent) === 'processos') || null;
-    }
-
+    // O item tem href real no HTML (autuacaoProcesso.do, target="userMainFrame"); é localizado
+    // pelo texto, que não muda.
     function itemNovaAcao() {
         return [...document.querySelectorAll('a[name="projudiMenu"]')]
             .find(a => norm(a.textContent) === 'cadastrar nova ação') || null;
     }
 
+    // "Processos" é o <a> do <li> que contém o submenu do item. Não usa id/classe/aria
+    // (sm-<número>-1, has-submenu, aria-controls): o SmartMenus só os cria depois do
+    // carregamento, e o id muda a cada vez.
+    function botaoProcessos(item) {
+        const li = item && item.closest('ul') && item.closest('ul').closest('li');
+        return li ? li.querySelector(':scope > a') : null;
+    }
+
     async function iniciar() {
-        const botao = botaoProcessos();
-        if (!botao) return log('menu "Processos" não encontrado');
+        const item = await esperar(itemNovaAcao);
+        if (!item) return log('item "Cadastrar Nova Ação" não encontrado no menu');
 
-        // Clique real (o JS do Projudi/SmartMenus ignora eventos sintéticos).
-        if (botao.getAttribute('aria-expanded') !== 'true') botao.click();
-
-        // Espera o submenu ficar visível; se não abrir, clica no item assim mesmo (ele tem
-        // href real com target="userMainFrame").
-        await esperar(() => { const a = itemNovaAcao(); return a && a.offsetParent !== null; }, 2000);
-        const item = itemNovaAcao();
-        if (!item) return log('item "Cadastrar Nova Ação" não encontrado');
+        // Abre Processos com clique real (o SmartMenus ignora eventos sintéticos) e espera o
+        // submenu aparecer; se não abrir, clica no item assim mesmo, pois o href é real.
+        const botao = botaoProcessos(item);
+        if (botao && botao.getAttribute('aria-expanded') !== 'true') {
+            log('abrindo menu', norm(botao.textContent));
+            botao.click();
+            await esperar(() => item.offsetParent !== null, 2000);
+        }
 
         sessionStorage.setItem(CHAVE_ATIVO, '1');
         log('clicando em Cadastrar Nova Ação');
@@ -134,13 +138,20 @@
 
     // ── Ponto de entrada ────────────────────────────────────────────────────────────
 
-    if (document.getElementById('autuacaoProcessoForm')) {
-        if (sessionStorage.getItem(CHAVE_ATIVO)) executarEtapa();
-    } else if (botaoProcessos()) {
+    function criarBotaoIniciar() {
+        if (document.getElementById('novaAcao_iniciar')) return;
         const btn = document.createElement('button');
-        btn.textContent = '➕ Nova Ação';
+        btn.id = 'novaAcao_iniciar';
+        btn.textContent = '▶ Iniciar Autuação';
         btn.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;padding:8px 12px;cursor:pointer';
         btn.onclick = iniciar;
         document.body.appendChild(btn);
+    }
+
+    if (document.getElementById('autuacaoProcessoForm')) {
+        if (sessionStorage.getItem(CHAVE_ATIVO)) executarEtapa();
+    } else {
+        // O botão vai só na frame que contém o menu (mainFrame).
+        esperar(itemNovaAcao, 15000).then(item => { if (item) criarBotaoIniciar(); });
     }
 })();
