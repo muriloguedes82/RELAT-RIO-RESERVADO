@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.6
+// @version      0.7
 // @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
@@ -26,6 +26,13 @@
     // (select#marcador) marcada na etapa 3.
     const TIPOS_AUTUACAO = ['Ata Correicional do Foro Judicial', 'Relatório Reservado'];
     const CHAVE_TIPO = 'novaAcao_tipo';
+    // Nº de partes na etapa 4 no momento em que o script clicou em Adicionar. A tabela já
+    // vem com a parte automática "(Corrigente) CORREGEDORIA-GERAL DA JUSTIÇA", então só um
+    // número maior que esse indica que o usuário salvou a parte nova.
+    const CHAVE_PARTES = 'novaAcao_partesAntes';
+    // Etapa em que o script clicou em Próximo Passo pela última vez. Se a página voltar
+    // na mesma etapa, o Projudi recusou o avanço (validação); não clica de novo em loop.
+    const CHAVE_ULTIMA = 'novaAcao_ultimaEtapa';
     const log = (...a) => console.log('[NovaAção]', ...a);
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -60,6 +67,8 @@
     }
 
     async function iniciar(tipo) {
+        sessionStorage.removeItem(CHAVE_PARTES);
+        sessionStorage.removeItem(CHAVE_ULTIMA);
         sessionStorage.setItem(CHAVE_TIPO, tipo);
         log('tipo de autuação:', tipo);
         const item = await esperar(itemNovaAcao);
@@ -98,6 +107,7 @@
     }
 
     function proximoPasso() {
+        sessionStorage.setItem(CHAVE_ULTIMA, String(etapaAtual()));
         const btn = document.getElementById('nextButton');
         if (!btn) return log('botão "Próximo Passo" não encontrado');
         log('clicando em Próximo Passo');
@@ -161,9 +171,50 @@
         return true;
     }
 
+    function contarPartes() {
+        return document.querySelectorAll('input[type="radio"][name="idxParteProcessoSelecionada"]').length;
+    }
+
+    // Etapa 4: abre o Cadastro de Parte para o usuário preencher. Salvar volta para esta
+    // etapa (nova carga de página), e então o script avança.
+    function etapaPartes() {
+        const antes = sessionStorage.getItem(CHAVE_PARTES);
+        const agora = contarPartes();
+        if (antes === null) {
+            sessionStorage.setItem(CHAVE_PARTES, String(agora));
+            log('clicando em Adicionar (partes atuais:', agora + ')');
+            return document.getElementById('addButton').click(); // onclick="adicionarParteProcesso();"
+        }
+        if (agora > Number(antes)) {
+            sessionStorage.removeItem(CHAVE_PARTES);
+            return proximoPasso();
+        }
+        // Voltou sem parte nova (Cancelar no cadastro): não avança nem reabre sozinho.
+        sessionStorage.removeItem(CHAVE_PARTES);
+        sessionStorage.removeItem(CHAVE_ATIVO);
+        log('nenhuma parte nova cadastrada; automação interrompida');
+    }
+
+    // Subetapa "- Cadastro de Parte" (sem número): o usuário preenche e clica em Salvar. O
+    // botão Salvar também tem id="nextButton", por isso o script não age nesta tela.
+    function avisoCadastroParte() {
+        const aviso = document.createElement('div');
+        aviso.textContent = 'Autuação automática: preencha a parte e clique em Salvar. O script continua depois.';
+        aviso.style.cssText = 'position:fixed;top:8px;right:8px;z-index:99999;background:#ffc;border:1px solid #cc9;'
+            + 'padding:6px 10px;font:13px sans-serif;border-radius:4px';
+        document.body.appendChild(aviso);
+    }
+
     async function executarEtapa() {
+        const span = document.querySelector('span.currentStep');
+        if (span && /cadastro de parte/i.test(span.textContent)) return avisoCadastroParte();
         const etapa = await esperar(etapaAtual, 5000);
         log('etapa', etapa);
+        if (!etapa) return log('etapa não identificada nesta página');
+        if (sessionStorage.getItem(CHAVE_ULTIMA) === String(etapa)) {
+            sessionStorage.removeItem(CHAVE_ATIVO);
+            return log('o Projudi não avançou da etapa', etapa, '(veja a mensagem na tela); automação interrompida');
+        }
         if (etapa === 1) {
             if (!await esperar(combosEtapa1Prontos, 10000)) {
                 return log('Localidade/Competência não foram preenchidas automaticamente; selecione e clique em Próximo Passo');
@@ -177,9 +228,13 @@
             if (!await selecionarPelaLupa('descricaoAssuntoPrincipal', 'Seleção de Assunto Principal', ASSUNTO_PRINCIPAL)) return;
             if (!selecionarEspecie(sessionStorage.getItem(CHAVE_TIPO))) return;
             log('etapa 3 preenchida');
-            // Fim do fluxo definido até aqui; as próximas etapas ainda não foram mapeadas.
-            sessionStorage.removeItem(CHAVE_ATIVO);
+            return proximoPasso();
         }
+        if (etapa === 4) return etapaPartes();
+        if (etapa === 5 || etapa === 6) return proximoPasso();
+        // Fim do fluxo definido até aqui; as etapas seguintes ainda não foram mapeadas.
+        log('etapa', etapa, 'ainda não automatizada; automação encerrada');
+        sessionStorage.removeItem(CHAVE_ATIVO);
     }
 
     // ── Ponto de entrada ────────────────────────────────────────────────────────────
