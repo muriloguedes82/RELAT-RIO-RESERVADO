@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.4
+// @version      0.5
 // @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
@@ -17,7 +17,11 @@
     'use strict';
 
     const CLASSE_PROCESSUAL = '1307';
+    const ASSUNTO_PRINCIPAL = '10015';
     const CHAVE_ATIVO = 'novaAcao_ativo';
+    // Seleção pendente na janela da lupa: {codigo, pesquisou}. Gravada pela frame do
+    // formulário e consumida pela frame da janela (iframe do Prototype Window).
+    const CHAVE_SELECAO = 'novaAcao_selecao';
     const log = (...a) => console.log('[NovaAção]', ...a);
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -94,29 +98,50 @@
         btn.click(); // executa o onclick (troca o action do form) e submete
     }
 
-    // Autocomplete do Projudi (Prototype/script.aculo.us): reage a keydown no campo e
-    // desenha as sugestões como <li> dentro de div#ajaxAuto_<id>.
-    async function preencherAutocomplete(id, texto) {
-        const input = document.getElementById(id);
-        if (!input) return log('campo', id, 'não encontrado');
+    // Seleção pela lupa. O autocomplete ignora a digitação simulada (as sugestões não
+    // aparecem), então a lupa abre a janela "Seleção de ...", um iframe com formulário
+    // próprio; o script roda nela também (ver selecionarNaJanela). Aqui só se registra o
+    // código desejado, clica na lupa e espera o campo do formulário ser preenchido.
+    async function selecionarPelaLupa(campoId, tituloLupa, codigo) {
+        const campo = document.getElementById(campoId);
+        if (!campo) return log('campo', campoId, 'não encontrado');
+        if (campo.value.trim()) return true;
 
-        input.focus();
-        input.value = texto;
-        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: texto.slice(-1) }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: texto.slice(-1) }));
-        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const lupa = [...document.querySelectorAll('a.searchButton')].find(a => norm(a.title) === norm(tituloLupa));
+        if (!lupa) return log('lupa', tituloLupa, 'não encontrada');
 
-        const li = await esperar(() => {
-            const div = document.getElementById('ajaxAuto_' + id);
-            if (!div || div.style.display === 'none') return null;
-            return [...div.querySelectorAll('li')].find(l => norm(l.textContent).startsWith(texto)) || null;
-        }, 10000);
-        if (!li) return log('sugestão', texto, 'não apareceu em', id);
+        sessionStorage.setItem(CHAVE_SELECAO, JSON.stringify({ codigo, pesquisou: false }));
+        log('abrindo', tituloLupa);
+        lupa.click(); // href="javascript:openDialogSelecao(...)"
 
-        log('selecionando', li.textContent.trim());
-        li.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-        li.click();
+        if (!await esperar(() => campo.value.trim(), 60000)) {
+            sessionStorage.removeItem(CHAVE_SELECAO);
+            return log(campoId, 'não foi preenchido pela janela de seleção');
+        }
+        log(campoId, '=', campo.value.trim());
         return true;
+    }
+
+    // Roda dentro da janela de seleção (classeProcessual.do, assunto...). "Pesquisar"
+    // submete e recarrega a janela, por isso o progresso fica em CHAVE_SELECAO.
+    function selecionarNaJanela() {
+        const sel = JSON.parse(sessionStorage.getItem(CHAVE_SELECAO));
+        const radio = document.querySelector('input[type="radio"][value="' + sel.codigo + '"]');
+        if (radio) {
+            log('marcando', sel.codigo, 'e clicando em Selecionar');
+            sessionStorage.removeItem(CHAVE_SELECAO);
+            radio.click();
+            document.getElementById('selectButton').click();
+            return;
+        }
+        if (sel.pesquisou) {
+            sessionStorage.removeItem(CHAVE_SELECAO);
+            return log('código', sel.codigo, 'não encontrado na pesquisa');
+        }
+        log('pesquisando', sel.codigo);
+        sessionStorage.setItem(CHAVE_SELECAO, JSON.stringify({ codigo: sel.codigo, pesquisou: true }));
+        document.getElementById('descricaoPesquisa').value = sel.codigo;
+        document.getElementById('searchButton').click();
     }
 
     async function executarEtapa() {
@@ -130,7 +155,10 @@
         }
         if (etapa === 2) return proximoPasso();
         if (etapa === 3) {
-            await preencherAutocomplete('descricaoClasseProcessual', CLASSE_PROCESSUAL);
+            // Se a seleção recarregar a página, a etapa 3 roda de novo e pula o que já foi preenchido.
+            if (!await selecionarPelaLupa('descricaoClasseProcessual', 'Seleção de Classe Processual', CLASSE_PROCESSUAL)) return;
+            if (!await selecionarPelaLupa('descricaoAssuntoPrincipal', 'Seleção de Assunto Principal', ASSUNTO_PRINCIPAL)) return;
+            log('etapa 3 preenchida');
             // Fim do fluxo definido até aqui; as próximas etapas ainda não foram mapeadas.
             sessionStorage.removeItem(CHAVE_ATIVO);
         }
@@ -148,7 +176,10 @@
         document.body.appendChild(btn);
     }
 
-    if (document.getElementById('autuacaoProcessoForm')) {
+    const ehJanelaSelecao = document.getElementById('descricaoPesquisa') && document.getElementById('selectButton');
+    if (ehJanelaSelecao) {
+        if (sessionStorage.getItem(CHAVE_SELECAO)) selecionarNaJanela();
+    } else if (document.getElementById('autuacaoProcessoForm')) {
         if (sessionStorage.getItem(CHAVE_ATIVO)) executarEtapa();
     } else {
         // O botão vai só na frame que contém o menu (mainFrame).
