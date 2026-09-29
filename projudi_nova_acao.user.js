@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.5
+// @version      0.6
 // @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
@@ -22,6 +22,10 @@
     // Seleção pendente na janela da lupa: {codigo, pesquisou}. Gravada pela frame do
     // formulário e consumida pela frame da janela (iframe do Prototype Window).
     const CHAVE_SELECAO = 'novaAcao_selecao';
+    // Tipo de Autuação escolhido ao iniciar; é o texto da opção de Espécie Processual
+    // (select#marcador) marcada na etapa 3.
+    const TIPOS_AUTUACAO = ['Ata Correicional do Foro Judicial', 'Relatório Reservado'];
+    const CHAVE_TIPO = 'novaAcao_tipo';
     const log = (...a) => console.log('[NovaAção]', ...a);
 
     const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -55,7 +59,9 @@
         return li ? li.querySelector(':scope > a') : null;
     }
 
-    async function iniciar() {
+    async function iniciar(tipo) {
+        sessionStorage.setItem(CHAVE_TIPO, tipo);
+        log('tipo de autuação:', tipo);
         const item = await esperar(itemNovaAcao);
         if (!item) return log('item "Cadastrar Nova Ação" não encontrado no menu');
 
@@ -144,6 +150,17 @@
         document.getElementById('searchButton').click();
     }
 
+    function selecionarEspecie(tipo) {
+        const sel = document.getElementById('marcador');
+        if (!sel) return log('campo Espécie Processual não encontrado');
+        const opt = [...sel.options].find(o => norm(o.textContent) === norm(tipo));
+        if (!opt) return log('Espécie Processual', tipo, 'não existe no select');
+        sel.value = opt.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        log('Espécie Processual =', opt.textContent.trim());
+        return true;
+    }
+
     async function executarEtapa() {
         const etapa = await esperar(etapaAtual, 5000);
         log('etapa', etapa);
@@ -158,6 +175,7 @@
             // Se a seleção recarregar a página, a etapa 3 roda de novo e pula o que já foi preenchido.
             if (!await selecionarPelaLupa('descricaoClasseProcessual', 'Seleção de Classe Processual', CLASSE_PROCESSUAL)) return;
             if (!await selecionarPelaLupa('descricaoAssuntoPrincipal', 'Seleção de Assunto Principal', ASSUNTO_PRINCIPAL)) return;
+            if (!selecionarEspecie(sessionStorage.getItem(CHAVE_TIPO))) return;
             log('etapa 3 preenchida');
             // Fim do fluxo definido até aqui; as próximas etapas ainda não foram mapeadas.
             sessionStorage.removeItem(CHAVE_ATIVO);
@@ -166,14 +184,43 @@
 
     // ── Ponto de entrada ────────────────────────────────────────────────────────────
 
+    // Botão fixo que abre um painel perguntando o Tipo de Autuação antes de iniciar.
     function criarBotaoIniciar() {
         if (document.getElementById('novaAcao_iniciar')) return;
+        const caixa = document.createElement('div');
+        caixa.id = 'novaAcao_iniciar';
+        caixa.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;font:13px sans-serif;text-align:left;'
+            + 'background:#fff;border:1px solid #999;border-radius:4px;padding:8px;box-shadow:0 2px 6px rgba(0,0,0,.3)';
+
         const btn = document.createElement('button');
-        btn.id = 'novaAcao_iniciar';
         btn.textContent = '▶ Iniciar Autuação';
-        btn.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:99999;padding:8px 12px;cursor:pointer';
-        btn.onclick = iniciar;
-        document.body.appendChild(btn);
+        btn.style.cssText = 'padding:6px 10px;cursor:pointer';
+
+        const painel = document.createElement('div');
+        painel.style.cssText = 'display:none;margin-bottom:8px';
+        painel.innerHTML = '<b>Tipo de Autuação:</b><br>' + TIPOS_AUTUACAO.map((t, i) =>
+            '<label style="display:block;margin:4px 0;cursor:pointer"><input type="radio" name="novaAcao_tipo" value="'
+            + i + '"' + (i === 0 ? ' checked' : '') + '> ' + t + '</label>').join('');
+
+        const confirmar = document.createElement('button');
+        confirmar.textContent = 'Iniciar';
+        confirmar.style.cssText = 'padding:4px 10px;cursor:pointer;margin-right:6px';
+        const cancelar = document.createElement('button');
+        cancelar.textContent = 'Cancelar';
+        cancelar.style.cssText = 'padding:4px 10px;cursor:pointer';
+        painel.append(confirmar, cancelar);
+
+        const alternar = aberto => { painel.style.display = aberto ? 'block' : 'none'; btn.style.display = aberto ? 'none' : ''; };
+        btn.onclick = () => alternar(true);
+        cancelar.onclick = () => alternar(false);
+        confirmar.onclick = () => {
+            const i = painel.querySelector('input[name="novaAcao_tipo"]:checked').value;
+            alternar(false);
+            iniciar(TIPOS_AUTUACAO[i]);
+        };
+
+        caixa.append(painel, btn);
+        document.body.appendChild(caixa);
     }
 
     const ehJanelaSelecao = document.getElementById('descricaoPesquisa') && document.getElementById('selectButton');
