@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.7
+// @version      0.8
 // @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
 // @grant        none
@@ -140,24 +140,32 @@
 
     // Roda dentro da janela de seleção (classeProcessual.do, assunto...). "Pesquisar"
     // submete e recarrega a janela, por isso o progresso fica em CHAVE_SELECAO.
-    function selecionarNaJanela() {
+    // A árvore de resultados é montada por JS depois da carga (e o Pesquisar pode tanto
+    // recarregar a janela quanto só atualizar a árvore), então a bolinha
+    // (input[type=radio][value=<código>]) é esperada em vez de procurada uma única vez.
+    async function selecionarNaJanela() {
         const sel = JSON.parse(sessionStorage.getItem(CHAVE_SELECAO));
-        const radio = document.querySelector('input[type="radio"][value="' + sel.codigo + '"]');
-        if (radio) {
-            log('marcando', sel.codigo, 'e clicando em Selecionar');
-            sessionStorage.removeItem(CHAVE_SELECAO);
-            radio.click();
-            document.getElementById('selectButton').click();
-            return;
+        const acharRadio = () => document.querySelector('input[type="radio"][value="' + sel.codigo + '"]');
+
+        if (!sel.pesquisou) {
+            log('pesquisando', sel.codigo);
+            sessionStorage.setItem(CHAVE_SELECAO, JSON.stringify({ codigo: sel.codigo, pesquisou: true }));
+            document.getElementById('descricaoPesquisa').value = sel.codigo;
+            document.getElementById('searchButton').click();
         }
-        if (sel.pesquisou) {
+
+        // Se o Pesquisar recarregar a janela, esta espera morre com ela e a nova carga continua.
+        const radio = await esperar(acharRadio, 15000);
+        if (!sessionStorage.getItem(CHAVE_SELECAO)) return; // outra carga desta janela já concluiu
+        if (!radio) {
             sessionStorage.removeItem(CHAVE_SELECAO);
-            return log('código', sel.codigo, 'não encontrado na pesquisa');
+            return log('bolinha do código', sel.codigo, 'não apareceu após a pesquisa');
         }
-        log('pesquisando', sel.codigo);
-        sessionStorage.setItem(CHAVE_SELECAO, JSON.stringify({ codigo: sel.codigo, pesquisou: true }));
-        document.getElementById('descricaoPesquisa').value = sel.codigo;
-        document.getElementById('searchButton').click();
+        log('marcando', sel.codigo, 'e clicando em Selecionar');
+        sessionStorage.removeItem(CHAVE_SELECAO);
+        radio.click();
+        await sleep(300);
+        document.getElementById('selectButton').click();
     }
 
     function selecionarEspecie(tipo) {
