@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         Projudi - Cadastrar Nova Ação
 // @namespace    https://projudi2.tjpr.jus.br/
-// @version      0.8
+// @version      0.9
 // @description  Botão "Iniciar Autuação": abre Processos > Cadastrar Nova Ação e avança as etapas do cadastro
 // @match        https://projudi2.tjpr.jus.br/projudi/*
+// @updateURL    https://raw.githubusercontent.com/muriloguedes82/RELAT-RIO-RESERVADO/claude/exciting-ramanujan-yykmwg/projudi_nova_acao.user.js
+// @downloadURL  https://raw.githubusercontent.com/muriloguedes82/RELAT-RIO-RESERVADO/claude/exciting-ramanujan-yykmwg/projudi_nova_acao.user.js
 // @grant        none
 // ==/UserScript==
 
